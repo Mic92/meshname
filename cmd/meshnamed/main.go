@@ -31,13 +31,12 @@ func parseNetworks(networksconf string) (map[string]*net.IPNet, error) {
 var (
 	listenAddr, networksconf string
 	getName, getIP           string
-	debug, noMeshIP          bool
+	debug                    bool
 )
 
 func init() {
 	flag.StringVar(&listenAddr, "listenaddr", "[::1]:53535", "address to listen on")
 	flag.StringVar(&networksconf, "networks", "ygg=200::/7,cjd=fc00::/8,meshname=::/0,popura=::/0", "TLD=subnet list separated by comma")
-	flag.BoolVar(&noMeshIP, "nomeship", false, "disable .meship resolver")
 	flag.StringVar(&getName, "getname", "", "convert IPv6 address to a name")
 	flag.StringVar(&getIP, "getip", "", "convert a name to IPv6 address")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
@@ -77,7 +76,7 @@ func main() {
 		logger.Fatalln(err)
 	}
 
-	s := meshname.New(logger, listenAddr, networks, !noMeshIP)
+	s := meshname.New(logger, listenAddr, networks)
 
 	if err := s.Start(); err != nil {
 		logger.Fatal(err)

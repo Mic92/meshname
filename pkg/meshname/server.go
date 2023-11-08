@@ -10,28 +10,26 @@ import (
 )
 
 type MeshnameServer struct {
-	log          *log.Logger
-	listenAddr   string
-	dnsClient    *dns.Client
-	dnsServer    *dns.Server
-	networks     map[string]*net.IPNet
-	enableMeshIP bool
+	log        *log.Logger
+	listenAddr string
+	dnsClient  *dns.Client
+	dnsServer  *dns.Server
+	networks   map[string]*net.IPNet
 
 	startedLock sync.RWMutex
 	started     bool
 }
 
 // New is a constructor for MeshnameServer
-func New(log *log.Logger, listenAddr string, networks map[string]*net.IPNet, enableMeshIP bool) *MeshnameServer {
+func New(log *log.Logger, listenAddr string, networks map[string]*net.IPNet) *MeshnameServer {
 	dnsClient := new(dns.Client)
 	dnsClient.Timeout = 5000000000 // increased 5 seconds timeout
 
 	return &MeshnameServer{
-		log:          log,
-		listenAddr:   listenAddr,
-		networks:     networks,
-		dnsClient:    dnsClient,
-		enableMeshIP: enableMeshIP,
+		log:        log,
+		listenAddr: listenAddr,
+		networks:   networks,
+		dnsClient:  dnsClient,
 	}
 }
 
@@ -59,12 +57,8 @@ func (s *MeshnameServer) Start() error {
 			NotifyStartedFunc: func() { close(waitStarted) },
 		}
 		for tld, subnet := range s.networks {
-			dns.HandleFunc(tld, s.handleMeshnameRequest)
+			dns.HandleFunc(tld, s.handleMeshIPRequest)
 			s.log.Debugln("Handling:", tld, subnet)
-		}
-		if s.enableMeshIP {
-			dns.HandleFunc("meship", s.handleMeshIPRequest)
-			s.log.Debugln("Handling: meship ::/0")
 		}
 
 		go func() {
@@ -83,7 +77,7 @@ func (s *MeshnameServer) Start() error {
 }
 
 func (s *MeshnameServer) handleMeshnameRequest(w dns.ResponseWriter, r *dns.Msg) {
-	var remoteLookups = make(map[string][]dns.Question)
+	remoteLookups := make(map[string][]dns.Question)
 	m := new(dns.Msg)
 	m.SetReply(r)
 	s.log.Debugln(r.String())
@@ -138,12 +132,12 @@ func (s *MeshnameServer) handleMeshIPRequest(w dns.ResponseWriter, r *dns.Msg) {
 	for _, q := range r.Question {
 		labels := dns.SplitDomainName(q.Name)
 		// resolve only 2nd level domains and AAAA type
-		if len(labels) != 2 || q.Qtype != dns.TypeAAAA || q.Qclass != dns.ClassINET {
+		if len(labels) < 2 || (q.Qtype != dns.TypeAAAA && q.Qtype != dns.TypeMX) || q.Qclass != dns.ClassINET {
 			s.log.Debugln("Error: invalid resource requested")
 			continue
 		}
 
-		if resolvedAddr, err := IPFromDomain(&labels[0]); err == nil {
+		if resolvedAddr, err := IPFromDomain(&labels[len(labels)-2]); err == nil {
 			answer := new(dns.AAAA)
 			answer.Hdr = dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
 			answer.AAAA = resolvedAddr
