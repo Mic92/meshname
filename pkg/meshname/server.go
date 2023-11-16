@@ -3,6 +3,7 @@ package meshname
 import (
 	"errors"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/gologme/log"
@@ -15,13 +16,14 @@ type MeshnameServer struct {
 	dnsClient  *dns.Client
 	dnsServer  *dns.Server
 	networks   map[string]*net.IPNet
+	reverseIps map[string]string
 
 	startedLock sync.RWMutex
 	started     bool
 }
 
 // New is a constructor for MeshnameServer
-func New(log *log.Logger, listenAddr string, networks map[string]*net.IPNet) *MeshnameServer {
+func New(log *log.Logger, listenAddr string, networks map[string]*net.IPNet, reverseIps map[string]string) *MeshnameServer {
 	dnsClient := new(dns.Client)
 	dnsClient.Timeout = 5000000000 // increased 5 seconds timeout
 
@@ -29,6 +31,7 @@ func New(log *log.Logger, listenAddr string, networks map[string]*net.IPNet) *Me
 		log:        log,
 		listenAddr: listenAddr,
 		networks:   networks,
+		reverseIps: reverseIps,
 		dnsClient:  dnsClient,
 	}
 }
@@ -60,6 +63,12 @@ func (s *MeshnameServer) Start() error {
 			dns.HandleFunc(tld, s.handleMeshIPRequest)
 			s.log.Debugln("Handling:", tld, subnet)
 		}
+		for arpa, tld := range s.reverseIps {
+			dns.HandleFunc(arpa, func(w dns.ResponseWriter, r *dns.Msg) {
+				s.handleReverseIPRequest(tld, w, r)
+			})
+			s.log.Debugln("Handling:", arpa, tld)
+		}
 
 		go func() {
 			if err := s.dnsServer.ListenAndServe(); err != nil {
@@ -73,6 +82,38 @@ func (s *MeshnameServer) Start() error {
 		return nil
 	} else {
 		return errors.New("MeshnameServer is already started")
+	}
+}
+
+func (s *MeshnameServer) handleReverseIPRequest(tld string, w dns.ResponseWriter, r *dns.Msg) {
+	m := new(dns.Msg)
+	m.SetReply(r)
+	s.log.Debugln(r.String())
+	for _, q := range r.Question {
+		labels := dns.SplitDomainName(q.Name)
+		// 0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.
+		// arpa domain should be 32 + 2 = 34 labels long
+		if len(labels) != 34 {
+			s.log.Debugln("Error: domain doesn't have the right length: ", q.Name)
+			continue
+		}
+		ip := make(net.IP, 16)
+		for i := 0; i < 32; i++ {
+			nibble, err := strconv.ParseInt(labels[i], 16, 8)
+			if err != nil {
+				s.log.Debugln("Error: invalid hex character in domain: ", q.Name)
+				continue
+			}
+			ip[15-i/2] |= byte(nibble) << uint(4*(i%2))
+		}
+		answer := new(dns.PTR)
+		answer.Hdr = dns.RR_Header{Name: q.Name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: 3600}
+		answer.Ptr = DomainFromIP(&ip) + "." + tld + "."
+		m.Answer = append(m.Answer, answer)
+	}
+
+	if err := w.WriteMsg(m); err != nil {
+		s.log.Debugln("Error writing response:", err)
 	}
 }
 
