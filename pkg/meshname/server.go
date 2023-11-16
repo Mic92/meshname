@@ -131,20 +131,33 @@ func (s *MeshnameServer) handleMeshIPRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	for _, q := range r.Question {
 		labels := dns.SplitDomainName(q.Name)
-		// resolve only 2nd level domains and AAAA type
-		if len(labels) < 2 || (q.Qtype != dns.TypeAAAA && q.Qtype != dns.TypeMX) || q.Qclass != dns.ClassINET {
+		// resolve only 2nd level domains
+		if len(labels) < 2 || q.Qclass != dns.ClassINET {
 			s.log.Debugln("Error: invalid resource requested")
 			continue
 		}
 
-		if resolvedAddr, err := IPFromDomain(&labels[len(labels)-2]); err == nil {
+		if q.Qtype != dns.TypeAAAA && q.Qtype != dns.TypeMX {
+			s.log.Debugln("Error: invalid record type requested")
+			continue
+		}
+		resolvedAddr, err := IPFromDomain(&labels[len(labels)-2])
+		if err != nil {
+			s.log.Debugln(err)
+			continue
+		}
+		switch q.Qtype {
+		case dns.TypeAAAA:
 			answer := new(dns.AAAA)
 			answer.Hdr = dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
 			answer.AAAA = resolvedAddr
-
 			m.Answer = append(m.Answer, answer)
-		} else {
-			s.log.Debugln(err)
+		case dns.TypeMX:
+			answer := new(dns.MX)
+			answer.Hdr = dns.RR_Header{Name: q.Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+			answer.Preference = 10
+			answer.Mx = q.Name
+			m.Answer = append(m.Answer, answer)
 		}
 	}
 
